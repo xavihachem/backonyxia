@@ -38,7 +38,7 @@ app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
 // Enhanced CORS configuration
 const allowedOrigins = [
-  '*'   // Common development port
+  'http://onyxia.store'   // Common development port
 ];
 
 const corsOptions = {
