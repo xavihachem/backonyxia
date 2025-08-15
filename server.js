@@ -36,37 +36,39 @@ const app = express();
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
-// Enhanced CORS configuration
-const allowedOrigins = [
-  'http://onyxia.store',
-  'https://onyxia.store',
-  'http://www.onyxia.store',
-  'https://www.onyxia.store',
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'http://localhost:5000',
-  'http://127.0.0.1:5000',
-  'http://localhost:5500',
-  'http://127.0.0.1:5500'
-];
+// Enhanced CORS configuration (hostname-based matching)
+const allowedHostnames = new Set([
+  'onyxia.store',
+  'www.onyxia.store',
+  'localhost',
+  '127.0.0.1'
+]);
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // Allow requests with no origin (like mobile apps, curl, internal health checks)
     if (!origin) return callback(null, true);
-    console.log("Allowed origins",allowedOrigins);
-    if (allowedOrigins.indexOf(origin) === -1) {
+    try {
+      const url = new URL(origin);
+      const hostname = url.hostname.toLowerCase();
+      if (allowedHostnames.has(hostname)) {
+        return callback(null, true);
+      }
       const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
       console.error(msg);
       return callback(new Error(msg), false);
+    } catch (e) {
+      // If Origin header is malformed, reject explicitly
+      const msg = `Invalid Origin header: ${origin}`;
+      console.error(msg);
+      return callback(new Error(msg), false);
     }
-    return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
     'Accept',
     'X-Request-ID',
     'X-Client-Timestamp'
