@@ -9,7 +9,8 @@ const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
 const cityController = require('./controllers/cityController');
-const jwt = require('jsonwebtoken');
+const session = require('express-session');
+const cookieParser = require('cookie-parser');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -94,6 +95,21 @@ const corsOptions = {
 
 // Apply CORS middleware
 app.use(cors(corsOptions));
+
+app.use(cookieParser());
+
+// Session Configuration
+const SESSION_SECRET = process.env.SESSION_SECRET || 'your_super_secret_session_key_here';
+app.use(session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+    httpOnly: true,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  }
+}));
 
 // Handle preflight requests
 app.options('*', cors(corsOptions));
@@ -835,39 +851,215 @@ app.use('/api/languages', languageRoutes);
 // --- Admin Authentication Routes ---
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'H01a05M19z97A@';
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key_here';
+
+// Middleware to check if the user is authenticated
+const isAuthenticated = (req, res, next) => {
+  if (req.session.user) {
+    return next();
+  }
+  return res.status(401).json({ success: false, message: 'Unauthorized. Please log in.' });
+};
 
 // POST /api/admin/login
-app.post('/api/admin/login', async (req, res) => {
+app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    try {
-      const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
-      return res.json({ success: true, token });
-    } catch (err) {
-      console.error('JWT sign error:', err);
-      return res.status(500).json({ success: false, message: 'Auth error' });
-    }
+    req.session.user = { username: username };
+    return res.json({ success: true, message: 'Login successful' });
   }
   return res.status(401).json({ success: false, message: 'Invalid credentials' });
 });
 
 // GET /api/admin/verify
-app.get('/api/admin/verify', (req, res) => {
-  const auth = req.headers['authorization'] || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (!token) return res.status(401).json({ success: false, message: 'No token' });
+app.get('/api/admin/verify', isAuthenticated, (req, res) => {
+  // If isAuthenticated middleware passes, the user is verified.
+  return res.json({ success: true, user: req.session.user });
+});
+
+// POST /api/admin/logout
+app.post('/api/admin/logout', (req, res) => {
+  req.session.destroy(err => {
+    if (err) {
+      return res.status(500).json({ success: false, message: 'Could not log out, please try again.' });
+    }
+    res.clearCookie('connect.sid'); // clear the session cookie
+    return res.json({ success: true, message: 'Logged out successfully' });
+  });
+});
+
+// Secure admin-only endpoints
+app.post('/api/products', isAuthenticated, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'additionalImages', maxCount: 10 }]), async (req, res) => {
+    console.log('=== CREATE PRODUCT REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Small description in request:', req.body.smallDescription);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return res.json({ success: true, user: { username: decoded.username } });
-  } catch (e) {
-    return res.status(401).json({ success: false, message: 'Invalid token' });
+    console.log('=== NEW PRODUCT REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Uploaded files:', req.files);
+    
+    // Parse display_home and home_position with proper defaults
+    const display_home = req.body.display_home === 'true' || req.body.display_home === true;
+    const home_position = display_home ? parseInt(req.body.home_position, 10) || 0 : 0;
+
+    let imagePath = '';
+    if (req.files && req.files.image && req.files.image[0]) {
+      imagePath = '/uploads/' + req.files.image[0].filename;
+    } else if (req.body.image) {
+      // Handle case where image is a URL or existing path
+      if (req.body.image.startsWith('http')) {
+        imagePath = req.body.image;
+      } else {
+        // If it's a path, ensure it starts with /uploads/
+        imagePath = req.body.image.startsWith('/') ? req.body.image : '/uploads/' + req.body.image;
+      }
+    }
+    
+    // Handle additional images
+    let additionalImagePaths = [];
+    if (req.files && req.files.additionalImages) {
+      additionalImagePaths = req.files.additionalImages.map(file => '/uploads/' + file.filename);
+    } else if (req.body.additionalImages) {
+      try {
+        const parsedImages = JSON.parse(req.body.additionalImages);
+        if (Array.isArray(parsedImages)) {
+          additionalImagePaths = parsedImages;
+        }
+      } catch (e) {
+        console.error('Could not parse additionalImages JSON:', e);
+      }
+    }
+
+    const newProduct = new Product({
+      name: req.body.name,
+      price: req.body.price,
+      description: req.body.description,
+      smallDescription: req.body.smallDescription,
+      image: imagePath,
+      additionalImages: additionalImagePaths,
+      stock: req.body.stock,
+      display_home: display_home,
+      home_position: home_position,
+      created_at: new Date()
+    });
+
+    await newProduct.save();
+    console.log('Product created successfully:', newProduct);
+    res.status(201).json({ success: true, data: newProduct });
+  } catch (err) {
+    console.error('Error creating product:', err);
+    res.status(500).json({ success: false, message: 'Error creating product', error: err.message });
   }
 });
 
-// POST /api/admin/logout (stateless)
-app.post('/api/admin/logout', (req, res) => {
-  return res.json({ success: true });
+app.put('/api/products/:id', isAuthenticated, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'additionalImages', maxCount: 10 }]), async (req, res) => {
+  console.log(`=== UPDATE PRODUCT REQUEST (ID: ${req.params.id}) ===`);
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  console.log('Uploaded files:', req.files);
+  try {
+    const { id } = req.params;
+    const updateData = { ...req.body };
+
+    // Parse boolean and number values
+    if (updateData.display_home !== undefined) {
+      updateData.display_home = updateData.display_home === 'true' || updateData.display_home === true;
+    }
+    if (updateData.home_position !== undefined) {
+      updateData.home_position = parseInt(updateData.home_position, 10) || 0;
+    }
+
+    // Handle main image update
+    if (req.files && req.files.image && req.files.image[0]) {
+      updateData.image = '/uploads/' + req.files.image[0].filename;
+    } else if (updateData.image && !updateData.image.startsWith('/uploads/') && !updateData.image.startsWith('http')) {
+      // If a non-path string is sent, prepend the path
+      updateData.image = '/uploads/' + updateData.image;
+    }
+
+    // Handle additional images update
+    if (req.files && req.files.additionalImages) {
+      const newImages = req.files.additionalImages.map(file => '/uploads/' + file.filename);
+      // Get existing product to combine images
+      const product = await Product.findById(id);
+      updateData.additionalImages = [...(product.additionalImages || []), ...newImages];
+    } else if (updateData.additionalImages) {
+      try {
+        const parsedImages = JSON.parse(updateData.additionalImages);
+        if (Array.isArray(parsedImages)) {
+          updateData.additionalImages = parsedImages;
+        }
+      } catch (e) {
+        console.error('Could not parse additionalImages on update:', e);
+      }
+    }
+
+    const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true });
+    if (!updatedProduct) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    console.log('Product updated successfully:', updatedProduct);
+    res.json({ success: true, data: updatedProduct });
+  } catch (err) {
+    console.error('Error updating product:', err);
+    res.status(500).json({ success: false, message: 'Error updating product', error: err.message });
+  }
+});
+
+app.delete('/api/products/:id', isAuthenticated, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedProduct = await Product.findByIdAndDelete(id);
+    if (!deletedProduct) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    res.json({ success: true, message: 'Product deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error deleting product', error: err.message });
+  }
+});
+
+app.put('/api/orders/:id', isAuthenticated, async (req, res) => {
+  console.log(`=== UPDATE ORDER STATUS REQUEST (ID: ${req.params.id}) ===`);
+  console.log('Update data:', req.body);
+  
+  try {
+    const { status } = req.body;
+    if (!status) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Status is required' 
+      });
+    }
+
+    const order = await Order.findOneAndUpdate(
+      { orderId: req.params.id },
+      { 
+        status,
+        updatedAt: new Date() 
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Order not found' 
+      });
+    }
+
+    console.log('Order status updated successfully:', order);
+    res.json({ 
+      success: true, 
+      message: 'Order status updated',
+      data: order
+    });
+  } catch (err) {
+    console.error('Error updating order status:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to update order status',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
 });
 
 // Handle 404 - This should be after all other routes
