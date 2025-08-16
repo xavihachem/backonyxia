@@ -13,7 +13,7 @@ const cityController = require('./controllers/cityController');
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = './uploads';
+    const uploadDir = path.resolve(__dirname, 'uploads');
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -828,7 +828,7 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5001;
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  console.log(`Test endpoint: http://localhost:${PORT}/test`);
-  console.log(`API Endpoint: http://localhost:${PORT}/api`);
+  console.log(`Server is running on http://0.0.0.0:${PORT}`);
+  console.log(`Test endpoint accessible at http://<your_vps_ip>:${PORT}/test`);
+  console.log(`API Endpoint accessible at http://<your_vps_ip>:${PORT}/api`);
 });
