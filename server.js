@@ -256,6 +256,51 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// Get products for home page (display_home = true)
+app.get('/api/products/home', async (req, res) => {
+  try {
+    console.log('Fetching home products...');
+    const products = await Product
+      .find(
+        { display_home: true },
+        'name description smallDescription price image additionalImages stock display_home home_position created_at'
+      )
+      .sort({ home_position: 1 });
+
+    const responseData = products.map(product => ({
+      _id: product._id,
+      smallDescription: product.smallDescription || '',
+      name: product.name,
+      description: product.description,
+      price: product.price,
+      image: product.image,
+      imageUrl: product.image && !product.image.startsWith('data:')
+        ? `${req.protocol}://${req.get('host')}${product.image}`
+        : product.image,
+      additionalImages: product.additionalImages || [],
+      stock: product.stock,
+      display_home: product.display_home || false,
+      home_position: product.home_position || 0,
+      created_at: product.created_at
+    }));
+
+    res.json(responseData);
+    console.log('Response sent successfully with', responseData.length, 'home products');
+  } catch (err) {
+    console.error('Error in /api/products/home:', {
+      message: err.message,
+      stack: err.stack,
+      name: err.name
+    });
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Error fetching home products',
+      error: process.env.NODE_ENV === 'development' ? err.message : {}
+    });
+  }
+});
+
 // Get single product by ID
 app.get('/api/products/:id', async (req, res) => {
   const productId = req.params.id;
