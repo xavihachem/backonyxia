@@ -38,29 +38,33 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
 // Enhanced CORS configuration (hostname-based matching)
-const allowedHostnames = new Set([
-  'onyxia.store',
-  'www.onyxia.store',
-  'localhost',
-  '127.0.0.1'
-]);
+const allowedOrigins = [
+  'http://onyxia.store',
+  'https://onyxia.store',
+  'http://www.onyxia.store',
+  'https://www.onyxia.store',
+  'http://localhost:3000',
+  'http://localhost:5000',
+  'http://localhost:5001',
+  'http://127.0.0.1:5001'
+];
 
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl, internal health checks)
     if (!origin) return callback(null, true);
-    try {
-      const url = new URL(origin);
-      const hostname = url.hostname.toLowerCase();
-      if (allowedHostnames.has(hostname)) {
-        return callback(null, true);
-      }
+    
+    // Check if the origin is in the allowed list or is a subdomain of our allowed domains
+    const allowed = allowedOrigins.some(allowedOrigin => {
+      return origin === allowedOrigin || 
+             origin.startsWith(allowedOrigin.replace('*', '')) ||
+             origin.endsWith('.onyxia.store');
+    });
+    
+    if (allowed) {
+      return callback(null, true);
+    } else {
       const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
-      console.error(msg);
-      return callback(new Error(msg), false);
-    } catch (e) {
-      // If Origin header is malformed, reject explicitly
-      const msg = `Invalid Origin header: ${origin}`;
       console.error(msg);
       return callback(new Error(msg), false);
     }
@@ -72,11 +76,15 @@ const corsOptions = {
     'X-Requested-With',
     'Accept',
     'X-Request-ID',
-    'X-Client-Timestamp'
+    'X-Client-Timestamp',
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Headers',
+    'Access-Control-Allow-Methods'
   ],
   exposedHeaders: [
     'X-Request-ID',
-    'X-Client-Timestamp'
+    'X-Client-Timestamp',
+    'Authorization'
   ],
   credentials: true,
   preflightContinue: false,
@@ -84,10 +92,23 @@ const corsOptions = {
   maxAge: 86400 // 24 hours
 };
 
+// Apply CORS middleware
 app.use(cors(corsOptions));
 
 // Handle preflight requests
 app.options('*', cors(corsOptions));
+
+// Add CORS headers to all responses
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  next();
+});
 
 // Log all requests
 app.use((req, res, next) => {
