@@ -11,6 +11,7 @@ const fs = require('fs');
 const cityController = require('./controllers/cityController');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
+const MongoStore = require('connect-mongo');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -100,17 +101,24 @@ app.use(cookieParser());
 
 // Session Configuration
 const SESSION_SECRET = process.env.SESSION_SECRET || 'your_super_secret_session_key_here';
+// If behind a reverse proxy (Nginx), enable trust proxy so cookies work correctly
+app.set('trust proxy', 1);
+
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
-  saveUninitialized: true, // Set to true to save sessions even if they are not modified
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGODB_URI,
+    collectionName: 'sessions',
+    ttl: 7 * 24 * 60 * 60 // 7 days in seconds
+  }),
   cookie: {
-    // IMPORTANT: Set secure to false if you are not using HTTPS in production.
-    // For a real production deployment with HTTPS, this should be true.
-    secure: false, 
+    // IMPORTANT: Set secure to true when your site is served over HTTPS
+    secure: false,
     httpOnly: true,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    sameSite: 'lax' // Recommended for security and cross-domain compatibility
+    sameSite: 'lax'
   }
 }));
 
@@ -887,6 +895,7 @@ app.post('/api/admin/login', (req, res) => {
       console.log('--- Login Successful ---');
       console.log('Session created for user:', username);
       console.log('Session ID:', req.sessionID);
+      console.log('Set-Cookie will be sent with response for session.');
       
       // Save the session before responding
       req.session.save(err => {
@@ -902,10 +911,18 @@ app.post('/api/admin/login', (req, res) => {
   }
 });
 
-// GET /api/admin/verify
-app.get('/api/admin/verify', isAuthenticated, (req, res) => {
-  // If the middleware passes, the user is authenticated.
-  return res.json({ success: true, user: req.session.user });
+// GET /api/admin/verify - Always return JSON, avoid proxy HTML error pages
+app.get('/api/admin/verify', (req, res) => {
+  console.log('--- /api/admin/verify ---');
+  console.log('Session ID:', req.sessionID);
+  console.log('Session data:', req.session);
+  console.log('Request cookies:', req.headers.cookie);
+
+  if (req.session && req.session.user) {
+    return res.json({ success: true, user: req.session.user });
+  }
+  // Do not use 401 here to avoid proxies replacing the JSON body with HTML
+  return res.json({ success: false, message: 'Not authenticated' });
 });
 
 // POST /api/admin/logout
