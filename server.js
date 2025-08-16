@@ -9,6 +9,7 @@ const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
 const cityController = require('./controllers/cityController');
+const jwt = require('jsonwebtoken');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -809,6 +810,44 @@ const languageRoutes = require('./routes/languageRoutes');
 app.use('/api/cities', cityRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/languages', languageRoutes);
+
+// --- Admin Authentication Routes ---
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'H01a05M19z97A@';
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key_here';
+
+// POST /api/admin/login
+app.post('/api/admin/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    try {
+      const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
+      return res.json({ success: true, token });
+    } catch (err) {
+      console.error('JWT sign error:', err);
+      return res.status(500).json({ success: false, message: 'Auth error' });
+    }
+  }
+  return res.status(401).json({ success: false, message: 'Invalid credentials' });
+});
+
+// GET /api/admin/verify
+app.get('/api/admin/verify', (req, res) => {
+  const auth = req.headers['authorization'] || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return res.status(401).json({ success: false, message: 'No token' });
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return res.json({ success: true, user: { username: decoded.username } });
+  } catch (e) {
+    return res.status(401).json({ success: false, message: 'Invalid token' });
+  }
+});
+
+// POST /api/admin/logout (stateless)
+app.post('/api/admin/logout', (req, res) => {
+  return res.json({ success: true });
+});
 
 // Handle 404 - This should be after all other routes
 app.use((req, res) => {
