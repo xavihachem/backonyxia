@@ -904,7 +904,7 @@ app.post('/api/admin/login', (req, res) => {
 
 // GET /api/admin/verify
 app.get('/api/admin/verify', isAuthenticated, (req, res) => {
-  // If isAuthenticated middleware passes, the user is verified.
+  // If the middleware passes, the user is authenticated.
   return res.json({ success: true, user: req.session.user });
 });
 
