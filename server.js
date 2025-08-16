@@ -101,6 +101,8 @@ app.use(cookieParser());
 
 // Session Configuration
 const SESSION_SECRET = process.env.SESSION_SECRET || 'your_super_secret_session_key_here';
+const isProd = process.env.NODE_ENV === 'production';
+
 // If behind a reverse proxy (Nginx), enable trust proxy so cookies work correctly
 app.set('trust proxy', 1);
 
@@ -114,8 +116,8 @@ app.use(session({
     ttl: 7 * 24 * 60 * 60 // 7 days in seconds
   }),
   cookie: {
-    // IMPORTANT: Set secure to true when your site is served over HTTPS
-    secure: false,
+    // Set secure to true in production. This requires HTTPS.
+    secure: isProd,
     httpOnly: true,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     sameSite: 'lax'
