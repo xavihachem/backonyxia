@@ -103,11 +103,14 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'your_super_secret_session_
 app.use(session({
   secret: SESSION_SECRET,
   resave: false,
-  saveUninitialized: false,
+  saveUninitialized: true, // Set to true to save sessions even if they are not modified
   cookie: {
-    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+    // IMPORTANT: Set secure to false if you are not using HTTPS in production.
+    // For a real production deployment with HTTPS, this should be true.
+    secure: false, 
     httpOnly: true,
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    sameSite: 'lax' // Recommended for security and cross-domain compatibility
   }
 }));
 
@@ -854,20 +857,49 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'H01a05M19z97A@';
 
 // Middleware to check if the user is authenticated
 const isAuthenticated = (req, res, next) => {
-  if (req.session.user) {
+  console.log('--- isAuthenticated Middleware ---');
+  console.log('Session ID:', req.sessionID);
+  console.log('Session data:', req.session);
+  console.log('Request cookies:', req.headers.cookie);
+
+  if (req.session && req.session.user) {
+    console.log('Authentication successful for user:', req.session.user.username);
     return next();
   }
-  return res.status(401).json({ success: false, message: 'Unauthorized. Please log in.' });
+  
+  console.log('Authentication failed: No user found in session.');
+  return res.status(401).json({ success: false, message: 'Session expired. Please log in again.' });
 };
 
 // POST /api/admin/login
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    req.session.user = { username: username };
-    return res.json({ success: true, message: 'Login successful' });
+    // Regenerate session to prevent session fixation attacks
+    req.session.regenerate(function(err) {
+      if (err) {
+        console.error('Session regeneration error:', err);
+        return res.status(500).json({ success: false, message: 'Login failed. Please try again.' });
+      }
+      
+      // Store user information in session
+      req.session.user = { username: username };
+      console.log('--- Login Successful ---');
+      console.log('Session created for user:', username);
+      console.log('Session ID:', req.sessionID);
+      
+      // Save the session before responding
+      req.session.save(err => {
+        if (err) {
+          console.error('Session save error:', err);
+          return res.status(500).json({ success: false, message: 'Login failed to save session.' });
+        }
+        return res.json({ success: true, message: 'Login successful' });
+      });
+    });
+  } else {
+    return res.status(401).json({ success: false, message: 'Invalid credentials' });
   }
-  return res.status(401).json({ success: false, message: 'Invalid credentials' });
 });
 
 // GET /api/admin/verify
