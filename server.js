@@ -727,8 +727,24 @@ app.post('/api/orders', async (req, res) => {
       };
     });
     
-    // Calculate shipping fee (you can implement your own logic here)
-    const shippingFee = req.body.deliveryMethod === 'home' ? 500 : 0; // Example shipping fee
+    // Calculate shipping fee based on city configuration
+    let shippingFee = 0;
+    try {
+      const selectedCityName = (req.body.city || '').trim();
+      if (selectedCityName) {
+        const cityDoc = await City.findOne({ name: selectedCityName });
+        if (cityDoc) {
+          // Use houseFee for home delivery, desktopFee for desktop/pickup
+          shippingFee = req.body.deliveryMethod === 'home' 
+            ? Number(cityDoc.houseFee || 0) 
+            : Number(cityDoc.desktopFee || 0);
+        }
+      }
+    } catch (e) {
+      console.error('Error determining shipping fee from City:', e.message);
+      // Fallback to 0 if lookup fails
+      shippingFee = 0;
+    }
     const total = subtotal + shippingFee;
     
     // Prepare order data
