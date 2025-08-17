@@ -391,8 +391,17 @@ app.use('/uploads', express.static(uploadsDir));
 
 app.post('/api/products', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'additionalImages', maxCount: 10 }]), async (req, res) => {
     console.log('=== CREATE PRODUCT REQUEST ===');
-    console.log('Request body:', req.body);
+    console.log('Request headers:', req.headers);
+    console.log('Request body fields:', Object.keys(req.body));
     console.log('Uploaded files:', req.files);
+    
+    // Log detailed info about the upload directory
+    const uploadsDir = path.resolve(__dirname, 'uploads');
+    console.log('Upload directory:', uploadsDir);
+    console.log('Directory exists:', fs.existsSync(uploadsDir));
+    if (fs.existsSync(uploadsDir)) {
+        console.log('Directory is writable:', fs.accessSync(uploadsDir, fs.constants.W_OK) === undefined);
+    }
 
     try {
         // Parse display_home and home_position with proper defaults
