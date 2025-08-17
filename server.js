@@ -391,291 +391,171 @@ app.use('/uploads', express.static(uploadsDir));
 
 app.post('/api/products', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'additionalImages', maxCount: 10 }]), async (req, res) => {
     console.log('=== CREATE PRODUCT REQUEST ===');
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    console.log('Small description in request:', req.body.smallDescription);
-  try {
-    console.log('=== NEW PRODUCT REQUEST ===');
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Request body:', req.body);
     console.log('Uploaded files:', req.files);
-    
-    // Parse display_home and home_position with proper defaults
-    const displayHome = req.body.display_home === 'true' || req.body.display_home === true;
-    const homePosition = displayHome ? parseInt(req.body.home_position || '0', 10) : 0;
-    
-    // Handle file uploads
-    let imagePath = '';
-    let additionalImages = [];
-    
-    // Handle main image
-    if (req.files && req.files.image && req.files.image[0]) {
-      // If file was uploaded via multipart/form-data
-      imagePath = '/uploads/' + req.files.image[0].filename;
-      console.log('Main image uploaded:', imagePath);
-    } else if (req.body.image) {
-      // If image is sent as base64 in the body
-      console.log('Main image received as base64');
-      // Check if it's a base64 string or a path
-      if (req.body.image.startsWith('data:image')) {
-        imagePath = req.body.image;
-      } else {
-        // If it's a path, ensure it starts with /uploads/
-        imagePath = req.body.image.startsWith('/') ? req.body.image : '/uploads/' + req.body.image;
-      }
-    }
-    
-    // Handle additional images
-    if (req.files && req.files.additionalImages) {
-      // If files were uploaded via multipart/form-data
-      additionalImages = req.files.additionalImages.map(file => '/uploads/' + file.filename);
-      console.log('Additional images uploaded:', additionalImages);
-    } else if (req.body.additionalImages) {
-      // If additional images are sent in the body (as base64 or array of base64)
-      console.log('Additional images received in body');
-      additionalImages = Array.isArray(req.body.additionalImages) ? 
-        req.body.additionalImages : [req.body.additionalImages];
-        
-      // Process each additional image
-      additionalImages = additionalImages.map(img => {
-        if (img.startsWith('data:image')) {
-          return img; // Keep as base64
+
+    try {
+        // Parse display_home and home_position with proper defaults
+        const displayHome = req.body.display_home === 'true' || req.body.display_home === true;
+        const homePosition = displayHome ? parseInt(req.body.home_position || '0', 10) : 0;
+
+        // Handle file uploads - ONLY multipart/form-data is supported now
+        const imagePath = (req.files && req.files.image && req.files.image[0])
+            ? '/uploads/' + req.files.image[0].filename
+            : '';
+
+        const additionalImages = (req.files && req.files.additionalImages)
+            ? req.files.additionalImages.map(file => '/uploads/' + file.filename)
+            : [];
+
+        // Handle stock data
+        let stockData = {
+            quantity: 0,
+            status: 'غير متاح'
+        };
+
+        if (req.body.stock) {
+            try {
+                // If stock is sent as a JSON string (e.g., from FormData)
+                const parsedStock = JSON.parse(req.body.stock);
+                stockData = {
+                    quantity: parseInt(parsedStock.quantity) || 0,
+                    status: parsedStock.status || (parsedStock.quantity > 0 ? 'متاح' : 'غير متاح')
+                };
+            } catch (e) {
+                // Fallback for simple number
+                const stockQuantity = parseInt(req.body.stock, 10);
+                if (!isNaN(stockQuantity)) {
+                    stockData = {
+                        quantity: stockQuantity,
+                        status: stockQuantity > 0 ? 'متاح' : 'غير متاح'
+                    };
+                }
+            }
         }
-        // Ensure path starts with /uploads/
-        return img.startsWith('/') ? img : '/uploads/' + img;
-      });
-    }
-    
-    // Handle stock data
-    let stockData = {
-      quantity: 0,
-      status: 'غير متاح'
-    };
-    
-    if (req.body.stock) {
-      if (typeof req.body.stock === 'object' && req.body.stock.quantity !== undefined) {
-        // If stock is an object with quantity and status
-        stockData = {
-          quantity: parseInt(req.body.stock.quantity) || 0,
-          status: req.body.stock.status || (req.body.stock.quantity > 0 ? 'متاح' : 'غير متاح')
+
+        const productData = {
+            name: req.body.name,
+            price: parseFloat(req.body.price || 0),
+            description: req.body.description,
+            smallDescription: req.body.smallDescription || '',
+            display_home: displayHome,
+            home_position: homePosition,
+            stock: stockData,
+            image: imagePath,
+            additionalImages: additionalImages
         };
-      } else if (!isNaN(req.body.stock)) {
-        // If stock is just a number (for backward compatibility)
-        const stockQuantity = parseInt(req.body.stock, 10);
-        stockData = {
-          quantity: stockQuantity,
-          status: stockQuantity > 0 ? 'متاح' : 'غير متاح'
-        };
-      }
+
+        // Validate required fields
+        const errors = {};
+        if (!productData.name || productData.name.trim() === '') {
+            errors.name = 'Product name is required';
+        }
+        if (isNaN(productData.price) || productData.price <= 0) {
+            errors.price = 'Valid price is required';
+        }
+        if (!productData.description || productData.description.trim() === '') {
+            errors.description = 'Description is required';
+        }
+
+        if (Object.keys(errors).length > 0) {
+            console.error('Validation errors:', errors);
+            return res.status(400).json({
+                success: false,
+                message: 'Validation failed',
+                errors: errors
+            });
+        }
+
+        const product = new Product(productData);
+        await product.save();
+
+        console.log('Product created successfully:', product);
+        res.status(201).json({ success: true, data: product });
+
+    } catch (err) {
+        console.error('Error creating product:', {
+            message: err.message,
+            stack: err.stack,
+            name: err.name,
+            originalError: err
+        });
+        res.status(500).json({
+            success: false,
+            message: 'Error creating product',
+            error: err.message
+        });
     }
-    
-    console.log('Creating product with stock data:', stockData);
-    
-    const productData = {
-      name: req.body.name,
-      price: parseFloat(req.body.price || 0),
-      description: req.body.description,
-      smallDescription: req.body.smallDescription || '',
-      display_home: displayHome,
-      home_position: homePosition,
-      stock: stockData,
-      image: imagePath,
-      additionalImages: additionalImages
-    };
-    
-    console.log('Parsed product data:', productData);
-    
-    // Validate required fields
-    const errors = {};
-    if (!productData.name || productData.name.trim() === '') {
-      errors.name = 'Product name is required';
-    }
-    if (isNaN(productData.price) || productData.price <= 0) {
-      errors.price = 'Valid price is required';
-    }
-    if (!productData.description || productData.description.trim() === '') {
-      errors.description = 'Description is required';
-    }
-    
-    if (Object.keys(errors).length > 0) {
-      console.error('Validation errors:', errors);
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Validation failed',
-        errors: errors
-      });
-    }
-    
-    console.log('Creating product with data:', productData);
-    
-    const product = new Product(productData);
-    const newProduct = await product.save();
-    
-    console.log('Product created successfully:', {
-      id: newProduct._id,
-      category: newProduct.category,
-      hasAdditionalImages: newProduct.additionalImages ? newProduct.additionalImages.length : 0
-    });
-    
-    res.status(201).json({
-      success: true,
-      data: newProduct
-    });
-  } catch (err) {
-    console.error('Error creating product:', {
-      message: err.message,
-      stack: err.stack,
-      name: err.name,
-      errors: err.errors
-    });
-    
-    // Handle validation errors
-    if (err.name === 'ValidationError') {
-      const errors = {};
-      Object.keys(err.errors).forEach(key => {
-        errors[key] = err.errors[key].message;
-      });
-      
-      return res.status(400).json({
-        success: false,
-        message: 'Validation Error',
-        errors: errors
-      });
-    }
-    
-    res.status(400).json({ 
-      success: false,
-      message: 'Error creating product',
-      error: process.env.NODE_ENV === 'development' ? err.message : {}
-    });
-  }
 });
 
-// Update a product
-app.put('/api/products/:id', async (req, res) => {
-    console.log(`=== UPDATE PRODUCT REQUEST (ID: ${req.params.id}) ===`);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-    console.log('Small description in request:', req.body.smallDescription);
+app.put('/api/products/:id', isAuthenticated, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'additionalImages', maxCount: 10 }]), async (req, res) => {
+  console.log(`=== UPDATE PRODUCT REQUEST (ID: ${req.params.id}) ===`);
+  console.log('Request body:', req.body);
+  console.log('Uploaded files:', req.files);
   try {
-    // Validate ID format
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Invalid product ID format: ${req.params.id}`
-      });
-    }
-    
-    // Prepare update data
+    const { id } = req.params;
     const updateData = { ...req.body };
-    
-    // Include small description in update data if it exists in the request
-    if ('smallDescription' in req.body) {
-      updateData.smallDescription = req.body.smallDescription;
-    }
-    
-    // Remove category from update data if it exists
-    if (updateData.category) {
-      delete updateData.category;
-    }
-    
-    // Handle stock update
-    if (updateData.stock) {
-      // Initialize default stock data
-      let stockQuantity = 0;
-      
-      // If stock is just a number (for backward compatibility)
-      if (typeof updateData.stock === 'number' || (typeof updateData.stock === 'string' && !isNaN(updateData.stock))) {
-        stockQuantity = Math.max(0, parseInt(updateData.stock, 10) || 0);
-      }
-      // If stock is an object with quantity and status
-      else if (updateData.stock && typeof updateData.stock === 'object') {
-        // Safely parse quantity
-        if (updateData.stock.quantity !== undefined && updateData.stock.quantity !== null) {
-          if (typeof updateData.stock.quantity === 'string') {
-            stockQuantity = Math.max(0, parseInt(updateData.stock.quantity.trim(), 10) || 0);
-          } else if (typeof updateData.stock.quantity === 'number') {
-            stockQuantity = Math.max(0, updateData.stock.quantity);
-          }
-        }
-      }
-      
-      // Always determine status from quantity to ensure consistency
-      const stockStatus = stockQuantity > 0 ? 'متاح' : 'غير متاح';
-      
-      // Update the stock data with validated values
-      updateData.stock = {
-        quantity: stockQuantity,
-        status: stockStatus
-      };
-    } else {
-      // If no stock data provided, set default values
-      updateData.stock = {
-        quantity: 0,
-        status: 'غير متاح'
-      };
-    }
-    
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    );
-    
+
+    // Find the existing product
+    const product = await Product.findById(id);
     if (!product) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Product with ID ${req.params.id} not found`
-      });
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    // Parse boolean and number values from form data
+    if (updateData.display_home !== undefined) {
+      updateData.display_home = updateData.display_home === 'true' || updateData.display_home === true;
+    }
+    if (updateData.home_position !== undefined) {
+      updateData.home_position = parseInt(updateData.home_position, 10) || 0;
+    }
+
+    // Handle main image update: if a new file is uploaded, update the path.
+    if (req.files && req.files.image && req.files.image[0]) {
+      updateData.image = '/uploads/' + req.files.image[0].filename;
+    } else if (updateData.image === '' || updateData.image === null) {
+        // Allow removing the main image
+        updateData.image = '';
+    }
+
+    // Handle additional images: combine existing, newly uploaded, and handle removals.
+    let existingImages = [];
+    if (updateData.additionalImages) {
+        try {
+            // The list of existing images to keep is sent as a JSON string
+            existingImages = JSON.parse(updateData.additionalImages);
+        } catch (e) {
+            // If it's not a valid JSON string, it might be a single path.
+            existingImages = Array.isArray(updateData.additionalImages) ? updateData.additionalImages : [updateData.additionalImages];
+        }
     }
     
-    res.json({
-      success: true,
-      data: product
-    });
-    
+    const newImages = (req.files && req.files.additionalImages)
+        ? req.files.additionalImages.map(file => '/uploads/' + file.filename)
+        : [];
+
+    updateData.additionalImages = [...existingImages, ...newImages];
+
+    const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true });
+
+    console.log('Product updated successfully:', updatedProduct);
+    res.json({ success: true, data: updatedProduct });
   } catch (err) {
-    // Handle validation errors
-    if (err.name === 'ValidationError') {
-      const validationErrors = Object.values(err.errors).map(e => ({
-        field: e.path,
-        message: e.message,
-        value: e.value
-      }));
-      
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: validationErrors
-      });
-    }
-    
-    // Handle duplicate key errors
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyPattern)[0];
-      const value = err.keyValue[field];
-      
-      return res.status(400).json({
-        success: false,
-        message: `Duplicate key error: ${field} '${value}' already exists`,
-        field,
-        value
-      });
-    }
-    
-    // For all other errors
     console.error('Error updating product:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update product'
-    });
+    res.status(500).json({ success: false, message: 'Error updating product', error: err.message });
   }
 });
 
-// Delete a product
-app.delete('/api/products/:id', async (req, res) => {
+app.delete('/api/products/:id', isAuthenticated, async (req, res) => {
   try {
-    await Product.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Product deleted' });
+    const { id } = req.params;
+    const deletedProduct = await Product.findByIdAndDelete(id);
+    if (!deletedProduct) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    res.json({ success: true, message: 'Product deleted' });
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    res.status(500).json({ success: false, message: 'Error deleting product', error: err.message });
   }
 });
 
@@ -851,7 +731,7 @@ app.get('/api/orders/:id', async (req, res) => {
 });
 
 // Update order status
-app.put('/api/orders/:id', async (req, res) => {
+app.put('/api/orders/:id', isAuthenticated, async (req, res) => {
   console.log(`=== UPDATE ORDER STATUS REQUEST (ID: ${req.params.id}) ===`);
   console.log('Update data:', req.body);
   
