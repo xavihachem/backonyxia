@@ -518,63 +518,102 @@ app.post('/api/products', upload.fields([{ name: 'image', maxCount: 1 }, { name:
     }
 });
 
+// Update an existing product (multipart/form-data)
 app.put('/api/products/:id', isAuthenticated, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'additionalImages', maxCount: 10 }]), async (req, res) => {
-  console.log(`=== UPDATE PRODUCT REQUEST (ID: ${req.params.id}) ===`);
-  console.log('Request body:', req.body);
-  console.log('Uploaded files:', req.files);
-  try {
-    const { id } = req.params;
-    const updateData = { ...req.body };
+    const productId = req.params.id;
+    console.log('=== UPDATE PRODUCT REQUEST ===', productId);
+    console.log('Request body fields:', Object.keys(req.body));
+    console.log('Uploaded files:', req.files);
 
-    // Find the existing product
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
-    }
-
-    // Parse boolean and number values from form data
-    if (updateData.display_home !== undefined) {
-      updateData.display_home = updateData.display_home === 'true' || updateData.display_home === true;
-    }
-    if (updateData.home_position !== undefined) {
-      updateData.home_position = parseInt(updateData.home_position, 10) || 0;
-    }
-
-    // Handle main image update: if a new file is uploaded, update the path.
-    if (req.files && req.files.image && req.files.image[0]) {
-      updateData.image = '/uploads/' + req.files.image[0].filename;
-    } else if (updateData.image === '' || updateData.image === null) {
-        // Allow removing the main image
-        updateData.image = '';
-    }
-
-    // Handle additional images: combine existing, newly uploaded, and handle removals.
-    let existingImages = [];
-    if (updateData.additionalImages) {
-        try {
-            // The list of existing images to keep is sent as a JSON string
-            existingImages = JSON.parse(updateData.additionalImages);
-        } catch (e) {
-            // If it's not a valid JSON string, it might be a single path.
-            existingImages = Array.isArray(updateData.additionalImages) ? updateData.additionalImages : [updateData.additionalImages];
+    try {
+        const existing = await Product.findById(productId);
+        if (!existing) {
+            return res.status(404).json({ success: false, message: 'Product not found' });
         }
+
+        // Parse flags
+        const displayHome = req.body.display_home === 'true' || req.body.display_home === true;
+        const homePosition = displayHome ? parseInt(req.body.home_position || '0', 10) : 0;
+
+        // Parse stock
+        let stockData = existing.stock || { quantity: 0, status: 'غير متاح' };
+        if (req.body.stock) {
+            try {
+                const parsed = JSON.parse(req.body.stock);
+                const qty = parseInt(parsed.quantity) || 0;
+                stockData = { quantity: qty, status: parsed.status || (qty > 0 ? 'متاح' : 'غير متاح') };
+            } catch {
+                const qty = parseInt(req.body.stock, 10);
+                if (!isNaN(qty)) {
+                    stockData = { quantity: qty, status: qty > 0 ? 'متاح' : 'غير متاح' };
+                }
+            }
+        }
+
+        // Main image: keep existing unless a new one uploaded
+        let imagePath = existing.image || '';
+        if (req.files && req.files.image && req.files.image[0]) {
+            imagePath = '/uploads/' + req.files.image[0].filename;
+        }
+
+        // Additional images: combine remaining existing (from body) with new uploads
+        let remainingExisting = [];
+        if (typeof req.body.additionalImages !== 'undefined') {
+            if (Array.isArray(req.body.additionalImages)) {
+                // Could be multiple fields: files (ignored here) or strings; keep string URLs
+                remainingExisting = req.body.additionalImages.filter(v => typeof v === 'string' && v.trim() !== '');
+            } else if (typeof req.body.additionalImages === 'string') {
+                try {
+                    const parsed = JSON.parse(req.body.additionalImages);
+                    if (Array.isArray(parsed)) {
+                        remainingExisting = parsed.filter(v => typeof v === 'string' && v.trim() !== '');
+                    }
+                } catch {
+                    // Single URL string
+                    if (req.body.additionalImages.trim() !== '') remainingExisting = [req.body.additionalImages.trim()];
+                }
+            }
+        } else {
+            // If client sent nothing, default to existing ones
+            remainingExisting = Array.isArray(existing.additionalImages) ? existing.additionalImages : [];
+        }
+
+        const newUploaded = (req.files && req.files.additionalImages)
+            ? req.files.additionalImages.map(f => '/uploads/' + f.filename)
+            : [];
+
+        const mergedAdditional = [...remainingExisting, ...newUploaded];
+
+        const update = {
+            name: req.body.name ?? existing.name,
+            price: req.body.price !== undefined ? parseFloat(req.body.price || 0) : existing.price,
+            description: req.body.description ?? existing.description,
+            smallDescription: req.body.smallDescription ?? existing.smallDescription,
+            display_home: displayHome,
+            home_position: homePosition,
+            stock: stockData,
+            image: imagePath,
+            additionalImages: mergedAdditional
+        };
+
+        // Basic validation
+        const errors = {};
+        if (!update.name || update.name.trim() === '') errors.name = 'Product name is required';
+        if (isNaN(update.price) || update.price <= 0) errors.price = 'Valid price is required';
+        if (!update.description || update.description.trim() === '') errors.description = 'Description is required';
+        if (Object.keys(errors).length) {
+            return res.status(400).json({ success: false, message: 'Validation failed', errors });
+        }
+
+        const updated = await Product.findByIdAndUpdate(productId, update, { new: true });
+        res.json({ success: true, data: updated });
+    } catch (err) {
+        console.error('Error updating product:', err);
+        res.status(500).json({ success: false, message: 'Error updating product', error: err.message });
     }
-    
-    const newImages = (req.files && req.files.additionalImages)
-        ? req.files.additionalImages.map(file => '/uploads/' + file.filename)
-        : [];
-
-    updateData.additionalImages = [...existingImages, ...newImages];
-
-    const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true });
-
-    console.log('Product updated successfully:', updatedProduct);
-    res.json({ success: true, data: updatedProduct });
-  } catch (err) {
-    console.error('Error updating product:', err);
-    res.status(500).json({ success: false, message: 'Error updating product', error: err.message });
-  }
 });
+
+// (Removed duplicate PUT /api/products/:id handler)
 
 app.delete('/api/products/:id', isAuthenticated, async (req, res) => {
   try {
