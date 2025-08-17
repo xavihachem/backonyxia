@@ -616,22 +616,69 @@ app.put('/api/products/:id', isAuthenticated, upload.fields([{ name: 'image', ma
 // (Removed duplicate PUT /api/products/:id handler)
 
 app.delete('/api/products/:id', isAuthenticated, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const deletedProduct = await Product.findByIdAndDelete(id);
-    if (!deletedProduct) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+    try {
+        const { id } = req.params;
+        // Find product first to collect image paths
+        const product = await Product.findById(id);
+        if (!product) {
+            return res.status(404).json({ success: false, message: 'Product not found' });
+        }
+
+        // Collect all candidate image paths (main + additional)
+        const imageCandidates = [];
+        if (typeof product.image === 'string' && product.image.trim()) {
+            imageCandidates.push(product.image.trim());
+        }
+        if (Array.isArray(product.additionalImages)) {
+            for (const img of product.additionalImages) {
+                if (typeof img === 'string' && img.trim()) imageCandidates.push(img.trim());
+            }
+        }
+
+        // Helper to resolve absolute path inside uploads for a stored value
+        const resolveUploadPath = (p) => {
+            // Ignore external URLs or base64 data
+            if (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:')) return null;
+            // If stored like "/uploads/filename.ext"
+            if (p.startsWith('/uploads/')) {
+                return path.resolve(__dirname, '.' + p);
+            }
+            // If stored as just a filename or relative, put under uploads/
+            return path.resolve(__dirname, 'uploads', p.replace(/^\\+|^\/+/, ''));
+        };
+
+        let deletedFiles = 0;
+        for (const candidate of imageCandidates) {
+            const absPath = resolveUploadPath(candidate);
+            if (!absPath) continue;
+            try {
+                await fs.promises.unlink(absPath);
+                deletedFiles += 1;
+                console.log('Deleted image file:', absPath);
+            } catch (e) {
+                if (e && e.code === 'ENOENT') {
+                    console.warn('Image file not found (skipping):', absPath);
+                } else {
+                    console.warn('Failed to delete image file:', absPath, '-', e && e.message ? e.message : e);
+                }
+            }
+        }
+
+        // Now delete the product document
+        await Product.findByIdAndDelete(id);
+        return res.json({ success: true, message: 'Product and related images deleted', deletedImages: deletedFiles });
+    } catch (err) {
+        console.error('Error deleting product:', err);
+        return res.status(500).json({ success: false, message: 'Error deleting product', error: err.message });
     }
-    res.json({ success: true, message: 'Product deleted' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error deleting product', error: err.message });
-  }
 });
 
 // Order Endpoints
 
 // Create new order with cart items
 app.post('/api/orders', async (req, res) => {
+    console.log('=== CREATE ORDER REQUEST ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
   console.log('=== CREATE ORDER REQUEST ===');
   console.log('Request body:', JSON.stringify(req.body, null, 2));
   
