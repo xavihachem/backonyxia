@@ -27,17 +27,21 @@ const storage = multer.diskStorage({
   }
 });
 
+// Allow configuring per-file upload limit via env (in MB). Default: 15MB
+const UPLOAD_FILE_LIMIT_MB = parseInt(process.env.UPLOAD_FILE_LIMIT_MB || '15', 10);
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: UPLOAD_FILE_LIMIT_MB * 1024 * 1024 } // per-file limit
 });
 const bodyParser = require('body-parser');
 
 const app = express();
 
-// Increase the payload size limit to 10MB - This must be set before routes
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+// Increase the payload size limit (JSON and URL-encoded) before routes
+// Configurable via BODY_LIMIT env var (e.g., '30mb'). Default: 30mb
+const BODY_LIMIT = process.env.BODY_LIMIT || '30mb';
+app.use(bodyParser.json({ limit: BODY_LIMIT }));
+app.use(bodyParser.urlencoded({ limit: BODY_LIMIT, extended: true }));
 
 // Enhanced CORS configuration (hostname-based matching)
 const allowedOrigins = [
