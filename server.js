@@ -389,6 +389,22 @@ if (!fs.existsSync(uploadsDir)) {
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(uploadsDir));
 
+// --- Admin Authentication Middleware (must be defined BEFORE any routes that use it) ---
+function isAuthenticated(req, res, next) {
+  console.log('--- isAuthenticated Middleware ---');
+  console.log('Session ID:', req.sessionID);
+  console.log('Session data:', req.session);
+  console.log('Request cookies:', req.headers && req.headers.cookie);
+
+  if (req.session && req.session.user) {
+    console.log('Authentication successful for user:', req.session.user.username);
+    return next();
+  }
+
+  console.log('Authentication failed: No user found in session.');
+  return res.status(401).json({ success: false, message: 'Session expired. Please log in again.' });
+}
+
 app.post('/api/products', upload.fields([{ name: 'image', maxCount: 1 }, { name: 'additionalImages', maxCount: 10 }]), async (req, res) => {
     console.log('=== CREATE PRODUCT REQUEST ===');
     console.log('Request headers:', req.headers);
@@ -400,7 +416,12 @@ app.post('/api/products', upload.fields([{ name: 'image', maxCount: 1 }, { name:
     console.log('Upload directory:', uploadsDir);
     console.log('Directory exists:', fs.existsSync(uploadsDir));
     if (fs.existsSync(uploadsDir)) {
-        console.log('Directory is writable:', fs.accessSync(uploadsDir, fs.constants.W_OK) === undefined);
+        try {
+            fs.accessSync(uploadsDir, fs.constants.W_OK);
+            console.log('Directory is writable: true');
+        } catch (e) {
+            console.log('Directory is writable: false', e && e.message ? `- ${e.message}` : '');
+        }
     }
 
     try {
@@ -803,21 +824,7 @@ app.use('/api/languages', languageRoutes);
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'H01a05M19z97A@';
 
-// Middleware to check if the user is authenticated
-const isAuthenticated = (req, res, next) => {
-  console.log('--- isAuthenticated Middleware ---');
-  console.log('Session ID:', req.sessionID);
-  console.log('Session data:', req.session);
-  console.log('Request cookies:', req.headers.cookie);
-
-  if (req.session && req.session.user) {
-    console.log('Authentication successful for user:', req.session.user.username);
-    return next();
-  }
-  
-  console.log('Authentication failed: No user found in session.');
-  return res.status(401).json({ success: false, message: 'Session expired. Please log in again.' });
-};
+// isAuthenticated is defined earlier (above routes) to avoid temporal dead zone issues
 
 // POST /api/admin/login
 app.post('/api/admin/login', (req, res) => {
